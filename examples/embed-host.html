@@ -1,0 +1,139 @@
+<!doctype html>
+<!-- Example host page for the Human Atlas embed bridge.
+     Run the viewer on port 3016 (`npm run dev`), then serve this directory on
+     another port, e.g. `npx serve examples -l 8080` or
+     `python -m http.server 8080 -d examples`, and open http://localhost:8080/embed-host.html. -->
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Human Atlas · embed host example</title>
+<style>
+ :root{color-scheme:dark}
+ body{margin:0;font:14px/1.5 system-ui,sans-serif;background:#101418;color:#e8ecef;display:flex;height:100vh}
+ aside{width:340px;min-width:340px;padding:16px;border-right:1px solid #263040;overflow-y:auto;box-sizing:border-box}
+ h1{font-size:16px;margin:0 0 4px}
+ p.hint{margin:0 0 14px;color:#9aa7b4;font-size:12.5px}
+ .status{margin:0 0 12px;font-size:12.5px;color:#7fd8c9}
+ .group{margin:14px 0 6px;font-size:11px;letter-spacing:.12em;color:#8795a3;text-transform:uppercase}
+ button{margin:0 6px 6px 0;padding:6px 10px;font:inherit;color:#e8ecef;background:#1b232e;border:1px solid #2c3948;border-radius:6px;cursor:pointer}
+ button:hover{background:#232e3c}
+ iframe{flex:1;border:0;width:100%}
+ pre{margin:8px 0 0;padding:10px;background:#0b0f14;border:1px solid #263040;border-radius:6px;font-size:11.5px;max-height:260px;overflow:auto;color:#b7c4d0;white-space:pre-wrap}
+ .pin{padding:0 5px;margin:0 2px;font-size:10px;min-width:17px;height:17px;line-height:15px;border-radius:9px;background:#274d47;color:#9fe3d4;border:1px solid #3d7a6f}
+</style>
+</head>
+<body>
+<aside>
+ <h1>Human Atlas · embed host</h1>
+ <p class="hint">This page embeds the viewer cross-origin and drives it through the postMessage bridge. Every button below is one SDK tool call — the same tools an agent uses.</p>
+ <p class="status" id="status">Connecting…</p>
+ <div class="group">Layers</div>
+ <button data-tool="visibility_set" data-args='{"operation":"set","systems":["skeletal"]}'>Skeleton only</button>
+ <button data-tool="visibility_set" data-args='{"operation":"set","systems":["cardiac","respiratory","digestive","urinary","endocrine","reproductive"]}'>Organs</button>
+ <button id="show-all">Show all</button>
+ <button data-tool="visibility_set" data-args='{"operation":"remove","systems":["muscular","integumentary"]}'>Hide muscles &amp; surface</button>
+ <div class="group">Focus</div>
+ <button id="focus-heart">Isolate heart</button>
+ <button id="focus-brain">Frame brain</button>
+ <button id="supply-heart">Fold in heart supply</button>
+ <button data-tool="atlas_find" data-args='{"query":"femur"}'>find femur</button>
+ <button data-tool="atlas_inspect" id="inspect-femur" disabled>Inspect first hit</button>
+ <div class="group">Camera</div>
+ <button data-tool="camera_zoom" data-args='{"by":1.6}'>Zoom in</button>
+ <button data-tool="camera_zoom" data-args='{"by":0.6}'>Zoom out</button>
+ <button data-tool="camera_zoom" data-args='{"to":0.9}'>Zoom close</button>
+ <button data-tool="camera_set_view" data-args='{"view":"back"}'>Back view</button>
+ <button data-tool="camera_set_view" data-args='{"view":"three-quarter"}">¾ view</button>
+ <button data-tool="camera_rotate" data-args='{"on":true}'>Rotate</button>
+ <button data-tool="camera_rotate" data-args='{"on":false}'>Stop</button>
+ <div class="group">Scene</div>
+ <button data-tool="explode_set" data-args='{"level":0.6}'>Explode 60%</button>
+ <button data-tool="explode_set" data-args='{"level":0}'>Assemble</button>
+ <button data-tool="body_set_sex" data-args='{"sex":"female"}'>Female</button>
+ <button data-tool="body_set_sex" data-args='{"sex":"male"}'>Male</button>
+ <button data-tool="atlas_reset">Reset</button>
+ <div class="group">Language</div>
+ <button data-tool="ui_set_locale" data-args='{"locale":"zh"}'>中文</button>
+ <button data-tool="ui_set_locale" data-args='{"locale":"en"}'>English</button>
+ <div class="group">State</div>
+ <button data-tool="atlas_get_state">Get state</button>
+ <button id="capture">Capture view</button>
+ <div class="group">Agent prose with pins</div>
+ <p class="hint">An agent answer can name structures with [[id]] pins — parsed by the SDK, flown to on click.</p>
+ <p class="hint" id="pin-demo">Waiting for the viewer…</p>
+ <img id="capture-preview" alt="Captured 3D view" style="display:none;width:100%;border:1px solid #263040;border-radius:6px;margin-top:8px"/>
+ <pre id="log">Waiting for the viewer…</pre>
+</aside>
+<iframe id="atlas" title="Human Atlas viewer" allow="fullscreen"></iframe>
+<script src="http://localhost:3016/embed/human-atlas-sdk.js"></script>
+<script>
+ var VIEWER='http://localhost:3016/';
+ var iframe=document.getElementById("atlas"),log=document.getElementById("log"),statusEl=document.getElementById("status");
+ iframe.src=HumanAtlas.embedUrl(VIEWER,location.origin);
+ var atlas=HumanAtlas.connect(iframe,{origin:VIEWER});
+ var stateCount=0;
+ atlas.on('state',function(snapshot){
+  stateCount++;
+  var s=snapshot.scene;
+  statusEl.textContent='Connected · '+stateCount+' state events · '+snapshot.atlas.parts.toLocaleString()+' pieces · visible: '+s.visible.join(', ');
+ });
+ function show(title,value){log.textContent=title+'\n'+JSON.stringify(value,null,2);}
+ // The agent pattern: resolve a name to an atlas id with atlas_find, then act on the id.
+ function focusByName(name,mode){return atlas.call('atlas_find',{query:name}).then(function(result){
+  var match=result.results.filter(function(r){return r.name.toLowerCase()===name;})[0]||result.results[0];
+  if(!match)throw new Error('No structure named "'+name+'" was found.');
+  return atlas.call('atlas_focus',{id:match.id,mode:mode});
+ });}
+ document.getElementById('focus-heart').onclick=function(){focusByName('heart','isolate').then(function(r){show('atlas_focus heart → ok',r);},function(e){show('atlas_focus → error',{message:e.message});});};
+ document.getElementById('focus-brain').onclick=function(){focusByName('brain','frame').then(function(r){show('atlas_focus brain → ok',r);},function(e){show('atlas_focus → error',{message:e.message});});};
+ document.getElementById('supply-heart').onclick=function(){atlas.call('supply_collect',{kinds:['vascular']}).then(function(r){show('supply_collect → ok',r);},function(e){show('supply_collect → error',{message:e.message});});};
+ document.getElementById('capture').onclick=function(){atlas.call('scene_capture_image',{scale:2}).then(function(r){
+   show('scene_capture_image → ok',{width:r.width,height:r.height,bytes:r.dataUrl.length});
+   var img=document.getElementById('capture-preview');img.src=r.dataUrl;img.style.display='block';
+ },function(e){show('scene_capture_image → error',{message:e.message});});};
+ document.addEventListener('click',function(event){
+  var button=event.target.closest('button');
+  if(!button||iframe.contains(button))return;
+  if(button.id==='show-all'){atlas.call('atlas_reset');return;}
+  if(button.id==='inspect-femur')return;
+  if(!('tool'in button.dataset))return;
+  var args=button.dataset.args?JSON.parse(button.dataset.args):{};
+  atlas.call(button.dataset.tool,args).then(function(result){show(button.dataset.tool+' → ok',result);},function(error){show(button.dataset.tool+' → error',{message:error.message});});
+ });
+ atlas.ready.then(function(){return atlas.call('atlas_find',{query:'femur'});}).then(function(result){
+  var first=result.results[0];
+  var inspect=document.getElementById('inspect-femur');
+  inspect.disabled=!first;
+  inspect.onclick=function(){atlas.call('atlas_inspect',{id:first.id}).then(function(r){show('atlas_inspect → ok',r);});};
+  if(first)show('atlas_find → ok',result);
+ },function(){});
+ // Agent-prose pins: the host parses [[id]] markers itself; the SDK ships the parser.
+ function renderPins(element,prose){
+  element.textContent='';
+  var pattern=/\[\[([a-z0-9_:\-]+)\]\]/gi,last=0,match,n=0;
+  while((match=pattern.exec(prose))){
+   element.appendChild(document.createTextNode(prose.slice(last,match.index)));
+   var id=match[1],button=document.createElement('button');
+   button.className='pin';button.textContent=String(++n);button.title=id;
+   button.onclick=function(){atlas.call('atlas_focus',{id:id,mode:'frame'});};
+   element.appendChild(button);last=pattern.lastIndex;
+  }
+  element.appendChild(document.createTextNode(prose.slice(last)));
+ }
+ atlas.ready.then(function(){
+  return Promise.all([atlas.call('atlas_find',{query:'heart'}),atlas.call('atlas_find',{query:'brain'})]);
+ }).then(function(results){
+  var heart=results[0].results.filter(function(r){return r.name==='heart';})[0];
+  var brain=results[1].results.filter(function(r){return r.name==='brain';})[0];
+  if(!heart||!brain)return;
+  var prose='Each beat sends blood from the [['+heart.id+']] through the arteries; the [['+brain.id+']] receives it via the carotid tree.';
+  var demo=document.getElementById('pin-demo');
+  demo.textContent='';
+  var lead=document.createTextNode('Example agent answer: ');
+  demo.appendChild(lead);
+  renderPins(demo,prose);
+ },function(){});
+</script>
+</body>
+</html>
